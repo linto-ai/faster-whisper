@@ -59,6 +59,7 @@ class TranscriptionOptions(NamedTuple):
     prompt_reset_on_temperature: float
     temperatures: List[float]
     initial_prompt: Optional[Union[str, Iterable[int]]]
+    prompt: Optional[Union[str, Iterable[int]]]
     prefix: Optional[str]
     suppress_blank: bool
     suppress_tokens: Optional[List[int]]
@@ -217,6 +218,7 @@ class WhisperModel:
         condition_on_previous_text: bool = True,
         prompt_reset_on_temperature: float = 0.5,
         initial_prompt: Optional[Union[str, Iterable[int]]] = None,
+        prompt: Optional[Union[str, Iterable[int]]] = None,
         prefix: Optional[str] = None,
         suppress_blank: bool = True,
         suppress_tokens: Optional[List[int]] = [-1],
@@ -265,6 +267,8 @@ class WhisperModel:
             Arg has effect only if condition_on_previous_text is True.
           initial_prompt: Optional text string or iterable of token ids to provide as a
             prompt for the first window.
+          prompt: Optional text string or iterable of token ids to provide as a
+            prompt for all windows (except the first one if initial_prompt is specified).
           prefix: Optional text to provide as a prefix for the first window.
           suppress_blank: Suppress blank outputs at the beginning of the sampling.
           suppress_tokens: List of token IDs to suppress. -1 will suppress a default set
@@ -398,7 +402,8 @@ class WhisperModel:
             temperatures=(
                 temperature if isinstance(temperature, (list, tuple)) else [temperature]
             ),
-            initial_prompt=initial_prompt,
+            initial_prompt=initial_prompt or prompt,
+            prompt=prompt,
             prefix=prefix,
             suppress_blank=suppress_blank,
             suppress_tokens=get_suppressed_tokens(tokenizer, suppress_tokens),
@@ -411,6 +416,8 @@ class WhisperModel:
             clip_timestamps=clip_timestamps,
             hallucination_silence_threshold=hallucination_silence_threshold,
         )
+        if options.condition_on_previous_text and options.prompt:
+            raise ValueError("The `prompt` options cannot be set when `condition_on_previous_text` is True.")
 
         segments = self.generate_segments(features, tokenizer, options, encoder_output)
 
@@ -467,7 +474,7 @@ class WhisperModel:
         all_tokens = []
         prompt_reset_since = 0
 
-        if options.initial_prompt is not None:
+        if options.initial_prompt:
             if isinstance(options.initial_prompt, str):
                 initial_prompt = " " + options.initial_prompt.strip()
                 initial_prompt_tokens = tokenizer.encode(initial_prompt)
@@ -475,6 +482,13 @@ class WhisperModel:
             else:
                 initial_prompt_tokens = options.initial_prompt
             all_tokens.extend(initial_prompt_tokens)
+
+        if options.prompt:
+            if isinstance(options.prompt, str):
+                prompt = " " + options.prompt.strip()
+                prompt_tokens = tokenizer.encode(prompt)
+            else:
+                prompt_tokens = options.prompt
 
         last_speech_timestamp = 0.0
         # NOTE: This loop is obscurely flattened to make the diff readable.
@@ -511,8 +525,8 @@ class WhisperModel:
                     "Processing segment at %s", format_timestamp(time_offset)
                 )
 
-            if options.initial_prompt is not None and not options.condition_on_previous_text:
-                previous_tokens = initial_prompt_tokens
+            if options.prompt and not options.condition_on_previous_text:
+                previous_tokens = prompt_tokens
             else:
                 previous_tokens = all_tokens[prompt_reset_since:]
             prompt = self.get_prompt(
