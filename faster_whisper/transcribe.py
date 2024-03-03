@@ -157,6 +157,10 @@ class WhisperModel:
 
         self.feat_kwargs = self._get_feature_kwargs(model_path)
         self.feature_extractor = FeatureExtractor(**self.feat_kwargs)
+        if is_v3:
+            # Number of mel features changed
+            self.feature_extractor.mel_filters = self.feature_extractor.get_mel_filters(
+                self.feature_extractor.sampling_rate, self.feature_extractor.n_fft, n_mels=128)
         self.num_samples_per_token = self.feature_extractor.hop_length * 2
         self.frames_per_second = (
             self.feature_extractor.sampling_rate // self.feature_extractor.hop_length
