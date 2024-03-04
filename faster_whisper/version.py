@@ -1,3 +1,3 @@
 """Version information."""
 
-__version__ = "1.0.1.linto"
+__version__ = "1.0.1"
