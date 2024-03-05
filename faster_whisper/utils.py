@@ -9,20 +9,81 @@ import requests
 
 from tqdm.auto import tqdm
 
+import json
+import itertools
+
+_HACKS = {}
+
+def hook_alignment_heads(num_layers: int, num_heads: int):
+    # Fix issue https://github.com/SYSTRAN/faster-whisper/issues/688
+    # (alignment_heads are not properly set in the config.json file)
+    return lambda dirname: check_alignment_heads(dirname, num_layers, num_heads)
+
+def check_alignment_heads(dirname: str, num_layers: int, num_heads: int):
+    config = os.path.join(dirname, "config.json")
+    if os.path.exists(config):
+        with open(config, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        alignment_heads = data["alignment_heads"]
+        max_layers = max(h for h, _ in alignment_heads)
+        max_heads = max(h for _, h in alignment_heads)
+        if max_layers > num_layers - 1 or max_heads > num_heads - 1:
+            get_logger().warning(f"Invalid alignment heads in {config}, fixing it")
+            alignment_heads = list(
+                list(t) for t in itertools.product(
+                    range(num_layers // 2, num_layers),
+                    range(num_heads),
+                )
+            )
+            data["alignment_heads"] = alignment_heads
+            with open(config, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+
 _MODELS = {
-    "tiny.en": "guillaumekln/faster-whisper-tiny.en",
-    "tiny": "guillaumekln/faster-whisper-tiny",
-    "base.en": "guillaumekln/faster-whisper-base.en",
-    "base": "guillaumekln/faster-whisper-base",
-    "small.en": "guillaumekln/faster-whisper-small.en",
-    "small": "guillaumekln/faster-whisper-small",
-    "medium.en": "guillaumekln/faster-whisper-medium.en",
-    "medium": "guillaumekln/faster-whisper-medium",
-    "large-v1": "guillaumekln/faster-whisper-large-v1",
-    "large-v2": "guillaumekln/faster-whisper-large-v2",
-    "large-v3": "bababababooey/faster-whisper-large-v3",
-    "large": "guillaumekln/faster-whisper-large-v2",
+    "tiny.en": "Systran/faster-whisper-tiny.en",
+    "tiny": "Systran/faster-whisper-tiny",
+    "base.en": "Systran/faster-whisper-base.en",
+    "base": "Systran/faster-whisper-base",
+    "small.en": "Systran/faster-whisper-small.en",
+    "small": "Systran/faster-whisper-small",
+    "medium.en": "Systran/faster-whisper-medium.en",
+    "medium": "Systran/faster-whisper-medium",
+    "large-v1": "Systran/faster-whisper-large-v1",
+    "large-v2": "Systran/faster-whisper-large-v2",
+    "large-v3": "Systran/faster-whisper-large-v3",
+    "large": "Systran/faster-whisper-large-v3",
 }
+
+# Equivalent models in Hugging Face
+for model, v in list(_MODELS.items()):
+    if model == "large-v1":
+        model = "large"
+    elif model == "large":
+        continue
+    _MODELS[f"openai/whisper-{model}"] = v
+
+# English distilled models, with their equivalent in Hugging Face
+distilled_models_en = {
+    "distil-large-v2": "Systran/faster-distil-whisper-large-v2",
+    "distil-medium.en": "Systran/faster-distil-whisper-medium.en",
+    "distil-small.en": "Systran/faster-distil-whisper-small.en",
+}
+for k, v in list(distilled_models_en.items()):
+    distilled_models_en[f"distil-whisper/{k}"] = v
+_MODELS.update(distilled_models_en)
+
+# French finetuned & distilled models
+for num_layers in 2, 4, 8, 16:
+    model = f"whisper-large-v3-french-distil-dec{num_layers}"
+    repo = f"bofenghuang/whisper-large-v3-french-distil-dec{num_layers}/ctranslate2"
+    _MODELS[model] = repo
+    _MODELS[f"bofenghuang/{model}"] = repo
+    # See https://huggingface.co/bofenghuang/whisper-large-v3-french-distil-dec2/discussions/1
+    _HACKS[repo] = hook_alignment_heads(num_layers, 20)
+for model in "whisper-large-v3-french", "whisper-large-v2-french", "whisper-medium-french", :
+    repo = f"bofenghuang/{model}/ctranslate2"
+    _MODELS[model] = repo
+    _MODELS[f"bofenghuang/{model}"] = repo
 
 
 def available_models() -> List[str]:
@@ -51,8 +112,8 @@ def download_model(
     Args:
       size_or_id: Size of the model to download from https://huggingface.co/guillaumekln
         (tiny, tiny.en, base, base.en, small, small.en medium, medium.en, large-v1, large-v2,
-        large), or a CTranslate2-converted model ID from the Hugging Face Hub
-        (e.g. guillaumekln/faster-whisper-large-v2).
+        large-v3, large), or a CTranslate2-converted model ID from the Hugging Face Hub
+        (e.g. Systran/faster-whisper-large-v3).
       output_dir: Directory where the model should be saved. If not set, the model is saved in
         the cache directory.
       local_files_only:  If True, avoid downloading the file and return the path to the local
@@ -65,8 +126,10 @@ def download_model(
     Raises:
       ValueError: if the model size is invalid.
     """
-    if re.match(r".*/.*", size_or_id):
+    if re.match(r".*/.*", size_or_id) and size_or_id not in _MODELS:
         repo_id = size_or_id
+        subfolder = None
+        model_path_post_hook = None
     else:
         repo_id = _MODELS.get(size_or_id)
         if repo_id is None:
@@ -74,13 +137,22 @@ def download_model(
                 "Invalid model size '%s', expected one of: %s"
                 % (size_or_id, ", ".join(_MODELS.keys()))
             )
+        model_path_post_hook = _HACKS.get(repo_id)
+        folders = repo_id.split("/")
+        if len(folders) == 2:
+            repo_id, subfolder = repo_id, None
+        else:
+            repo_id, subfolder = "/".join(folders[:2]), "/".join(folders[2:])
 
     allow_patterns = [
         "config.json",
+        "preprocessor_config.json",
         "model.bin",
         "tokenizer.json",
         "vocabulary.*",
     ]
+    if subfolder:
+        allow_patterns = [f"{subfolder}/{p}" for p in allow_patterns]
 
     kwargs = {
         "local_files_only": local_files_only,
@@ -96,7 +168,7 @@ def download_model(
         kwargs["cache_dir"] = cache_dir
 
     try:
-        return huggingface_hub.snapshot_download(repo_id, **kwargs)
+        model_path = huggingface_hub.snapshot_download(repo_id, **kwargs)
     except (
         huggingface_hub.utils.HfHubHTTPError,
         requests.exceptions.ConnectionError,
@@ -112,8 +184,15 @@ def download_model(
         )
 
         kwargs["local_files_only"] = True
-        return huggingface_hub.snapshot_download(repo_id, **kwargs)
+        model_path = huggingface_hub.snapshot_download(repo_id, **kwargs)
 
+    if subfolder:
+        model_path = os.path.join(model_path, subfolder)
+
+    if model_path_post_hook:
+        model_path_post_hook(model_path)
+
+    return model_path
 
 def format_timestamp(
     seconds: float,
@@ -142,3 +221,10 @@ class disabled_tqdm(tqdm):
     def __init__(self, *args, **kwargs):
         kwargs["disable"] = True
         super().__init__(*args, **kwargs)
+
+
+def get_end(segments: List[dict]) -> Optional[float]:
+    return next(
+        (w["end"] for s in reversed(segments) for w in reversed(s["words"])),
+        segments[-1]["end"] if segments else None,
+    )
