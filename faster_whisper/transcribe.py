@@ -231,7 +231,7 @@ class WhisperModel:
         word_timestamps: bool = False,
         prepend_punctuations: str = "\"'“¿([{-",
         append_punctuations: str = "\"'.。,，!！?？:：”)]}、",
-        vad_filter: bool = False,
+        vad_filter: Union[bool, Iterable] = False,
         vad_parameters: Optional[Union[dict, VadOptions]] = None,
         max_new_tokens: Optional[int] = None,
         chunk_length: Optional[int] = None,
@@ -318,8 +318,11 @@ class WhisperModel:
         self.logger.info(
             "Processing audio with duration %s", format_timestamp(duration)
         )
-
-        if vad_filter:
+        if isinstance(vad_filter, list):
+            speech_chunks = vad_filter
+            audio = collect_chunks(audio, speech_chunks)
+            duration_after_vad = audio.shape[0] / sampling_rate
+        elif vad_filter:
             if vad_parameters is None:
                 vad_parameters = VadOptions()
             elif isinstance(vad_parameters, dict):
