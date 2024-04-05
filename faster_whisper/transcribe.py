@@ -231,7 +231,7 @@ class WhisperModel:
         word_timestamps: bool = False,
         prepend_punctuations: str = "\"'“¿([{-",
         append_punctuations: str = "\"'.。,，!！?？:：”)]}、",
-        vad_filter: Union[bool, Iterable] = False,
+        vad_filter: Union[bool, list] = False,
         vad_parameters: Optional[Union[dict, VadOptions]] = None,
         max_new_tokens: Optional[int] = None,
         chunk_length: Optional[int] = None,
@@ -287,8 +287,8 @@ class WhisperModel:
             with the previous word
           vad_filter: if vad_filter is a bool, it enables the voice activity detection (VAD) to filter out parts of the audio
             without speech using the Silero VAD model https://github.com/snakers4/silero-vad. 
-            If vad_filter is an iterable it will use this iterable as the speech segments. 
-            Expected format for the iterable is [(start, end), ...] or [{'start': start, 'end': end}, ...], start and end are integers (samples).
+            If vad_filter is an list it will use this list as the speech segments. If the list is empty it will not filter the audio.
+            Expected format for the list is [(start, end), ...] or [{'start': start, 'end': end}, ...], start and end are integers (samples).
             Meaning that an audio with 16kHz, start will be equal to 16000 if the segment starts at 1 second.
           vad_parameters: Dictionary of Silero VAD parameters or VadOptions class (see available
             parameters and default values in the class `VadOptions`).
