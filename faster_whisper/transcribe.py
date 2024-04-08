@@ -231,7 +231,7 @@ class WhisperModel:
         word_timestamps: bool = False,
         prepend_punctuations: str = "\"'“¿([{-",
         append_punctuations: str = "\"'.。,，!！?？:：”)]}、",
-        vad_filter: bool = False,
+        vad_filter: Union[bool, list] = False,
         vad_parameters: Optional[Union[dict, VadOptions]] = None,
         max_new_tokens: Optional[int] = None,
         chunk_length: Optional[int] = None,
@@ -285,9 +285,11 @@ class WhisperModel:
             with the next word
           append_punctuations: If word_timestamps is True, merge these punctuation symbols
             with the previous word
-          vad_filter: Enable the voice activity detection (VAD) to filter out parts of the audio
-            without speech. This step is using the Silero VAD model
-            https://github.com/snakers4/silero-vad.
+          vad_filter: if vad_filter is a bool, it enables the voice activity detection (VAD) to filter out parts of the audio
+            without speech using the Silero VAD model https://github.com/snakers4/silero-vad. 
+            If vad_filter is an list it will use this list as the speech segments. If the list is empty it will not filter the audio.
+            Expected format for the list is [(start, end), ...] or [{'start': start, 'end': end}, ...], start and end are integers (samples).
+            Meaning that an audio with 16kHz, start will be equal to 16000 if the segment starts at 1 second.
           vad_parameters: Dictionary of Silero VAD parameters or VadOptions class (see available
             parameters and default values in the class `VadOptions`).
           max_new_tokens: Maximum number of new tokens to generate per-chunk. If not set,
@@ -318,13 +320,17 @@ class WhisperModel:
         self.logger.info(
             "Processing audio with duration %s", format_timestamp(duration)
         )
-
         if vad_filter:
-            if vad_parameters is None:
-                vad_parameters = VadOptions()
-            elif isinstance(vad_parameters, dict):
-                vad_parameters = VadOptions(**vad_parameters)
-            speech_chunks = get_speech_timestamps(audio, vad_parameters)
+            if isinstance(vad_filter, bool):
+                if vad_parameters is None:
+                    vad_parameters = VadOptions()
+                elif isinstance(vad_parameters, dict):
+                    vad_parameters = VadOptions(**vad_parameters)
+                speech_chunks = get_speech_timestamps(audio, vad_parameters)
+            else:
+                if isinstance(vad_filter[0], tuple):
+                    vad_filter = [dict(start=ts[0], end=ts[1]) for ts in vad_filter]
+                speech_chunks = vad_filter
             audio = collect_chunks(audio, speech_chunks)
             duration_after_vad = audio.shape[0] / sampling_rate
 
