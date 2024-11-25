@@ -67,6 +67,9 @@ distilled_models_en = {
     "distil-large-v2": "Systran/faster-distil-whisper-large-v2",
     "distil-medium.en": "Systran/faster-distil-whisper-medium.en",
     "distil-small.en": "Systran/faster-distil-whisper-small.en",
+    "distil-large-v3": "Systran/faster-distil-whisper-large-v3",
+    "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+    "turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
 }
 for k, v in list(distilled_models_en.items()):
     distilled_models_en[f"distil-whisper/{k}"] = v
@@ -110,9 +113,10 @@ def download_model(
     """Downloads a CTranslate2 Whisper model from the Hugging Face Hub.
 
     Args:
-      size_or_id: Size of the model to download from https://huggingface.co/guillaumekln
-        (tiny, tiny.en, base, base.en, small, small.en medium, medium.en, large-v1, large-v2,
-        large-v3, large), or a CTranslate2-converted model ID from the Hugging Face Hub
+      size_or_id: Size of the model to download from https://huggingface.co/Systran
+        (tiny, tiny.en, base, base.en, small, small.en, distil-small.en, medium, medium.en,
+        distil-medium.en, large-v1, large-v2, large-v3, large, distil-large-v2,
+        distil-large-v3), or a CTranslate2-converted model ID from the Hugging Face Hub
         (e.g. Systran/faster-whisper-large-v3).
       output_dir: Directory where the model should be saved. If not set, the model is saved in
         the cache directory.
