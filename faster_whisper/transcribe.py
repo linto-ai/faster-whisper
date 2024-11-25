@@ -644,7 +644,7 @@ class WhisperModel:
             **model_kwargs,
         )
 
-        is_v3 = "large-v3" in model_size_or_path
+        is_v3 = "large-v3" in model_size_or_path or "turbo" in model_size_or_path
         self.is_v3 = is_v3
 
         tokenizer_file = os.path.join(model_path, "tokenizer.json")
@@ -662,10 +662,10 @@ class WhisperModel:
 
         self.feat_kwargs = self._get_feature_kwargs(model_path, preprocessor_bytes)
         self.feature_extractor = FeatureExtractor(**self.feat_kwargs)
-        if is_v3:
-            # Number of mel features changed
-            self.feature_extractor.mel_filters = self.feature_extractor.get_mel_filters(
-                self.feature_extractor.sampling_rate, self.feature_extractor.n_fft, n_mels=128)
+        # if is_v3:
+        #     # Number of mel features changed
+        #     self.feature_extractor.mel_filters = self.feature_extractor.get_mel_filters(
+        #         self.feature_extractor.sampling_rate, self.feature_extractor.n_fft, n_mels=128)
         self.input_stride = 2
         self.num_samples_per_token = (
             self.feature_extractor.hop_length * self.input_stride
