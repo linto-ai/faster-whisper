@@ -2,42 +2,11 @@ import logging
 import os
 import re
 
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import huggingface_hub
-import requests
 
 from tqdm.auto import tqdm
-
-import json
-import itertools
-
-_HACKS = {}
-
-def hook_alignment_heads(num_layers: int, num_heads: int):
-    # Fix issue https://github.com/SYSTRAN/faster-whisper/issues/688
-    # (alignment_heads are not properly set in the config.json file)
-    return lambda dirname: check_alignment_heads(dirname, num_layers, num_heads)
-
-def check_alignment_heads(dirname: str, num_layers: int, num_heads: int):
-    config = os.path.join(dirname, "config.json")
-    if os.path.exists(config):
-        with open(config, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        alignment_heads = data["alignment_heads"]
-        max_layers = max(h for h, _ in alignment_heads)
-        max_heads = max(h for _, h in alignment_heads)
-        if max_layers > num_layers - 1 or max_heads > num_heads - 1:
-            get_logger().warning(f"Invalid alignment heads in {config}, fixing it")
-            alignment_heads = list(
-                list(t) for t in itertools.product(
-                    range(num_layers // 2, num_layers),
-                    range(num_heads),
-                )
-            )
-            data["alignment_heads"] = alignment_heads
-            with open(config, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
 
 _MODELS = {
     "tiny.en": "Systran/faster-whisper-tiny.en",
@@ -52,41 +21,14 @@ _MODELS = {
     "large-v2": "Systran/faster-whisper-large-v2",
     "large-v3": "Systran/faster-whisper-large-v3",
     "large": "Systran/faster-whisper-large-v3",
-}
-
-# Equivalent models in Hugging Face
-for model, v in list(_MODELS.items()):
-    if model == "large-v1":
-        model = "large"
-    elif model == "large":
-        continue
-    _MODELS[f"openai/whisper-{model}"] = v
-
-# English distilled models, with their equivalent in Hugging Face
-distilled_models_en = {
     "distil-large-v2": "Systran/faster-distil-whisper-large-v2",
     "distil-medium.en": "Systran/faster-distil-whisper-medium.en",
     "distil-small.en": "Systran/faster-distil-whisper-small.en",
     "distil-large-v3": "Systran/faster-distil-whisper-large-v3",
+    "distil-large-v3.5": "distil-whisper/distil-large-v3.5-ct2",
     "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
     "turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
 }
-for k, v in list(distilled_models_en.items()):
-    distilled_models_en[f"distil-whisper/{k}"] = v
-_MODELS.update(distilled_models_en)
-
-# French finetuned & distilled models
-for num_layers in 2, 4, 8, 16:
-    model = f"whisper-large-v3-french-distil-dec{num_layers}"
-    repo = f"bofenghuang/whisper-large-v3-french-distil-dec{num_layers}/ctranslate2"
-    _MODELS[model] = repo
-    _MODELS[f"bofenghuang/{model}"] = repo
-    # See https://huggingface.co/bofenghuang/whisper-large-v3-french-distil-dec2/discussions/1
-    _HACKS[repo] = hook_alignment_heads(num_layers, 20)
-for model in "whisper-large-v3-french", "whisper-large-v2-french", "whisper-medium-french", :
-    repo = f"bofenghuang/{model}/ctranslate2"
-    _MODELS[model] = repo
-    _MODELS[f"bofenghuang/{model}"] = repo
 
 
 def available_models() -> List[str]:
@@ -109,6 +51,8 @@ def download_model(
     output_dir: Optional[str] = None,
     local_files_only: bool = False,
     cache_dir: Optional[str] = None,
+    revision: Optional[str] = None,
+    use_auth_token: Optional[Union[str, bool]] = None,
 ):
     """Downloads a CTranslate2 Whisper model from the Hugging Face Hub.
 
@@ -123,6 +67,10 @@ def download_model(
       local_files_only:  If True, avoid downloading the file and return the path to the local
         cached file if it exists.
       cache_dir: Path to the folder where cached files are stored.
+      revision: An optional Git revision id which can be a branch name, a tag, or a
+            commit hash.
+      use_auth_token: HuggingFace authentication token or True to use the
+            token stored by the HuggingFace config folder.
 
     Returns:
       The path to the downloaded model.
@@ -130,10 +78,8 @@ def download_model(
     Raises:
       ValueError: if the model size is invalid.
     """
-    if re.match(r".*/.*", size_or_id) and size_or_id not in _MODELS:
+    if re.match(r".*/.*", size_or_id):
         repo_id = size_or_id
-        subfolder = None
-        model_path_post_hook = None
     else:
         repo_id = _MODELS.get(size_or_id)
         if repo_id is None:
@@ -141,12 +87,6 @@ def download_model(
                 "Invalid model size '%s', expected one of: %s"
                 % (size_or_id, ", ".join(_MODELS.keys()))
             )
-        model_path_post_hook = _HACKS.get(repo_id)
-        folders = repo_id.split("/")
-        if len(folders) == 2:
-            repo_id, subfolder = repo_id, None
-        else:
-            repo_id, subfolder = "/".join(folders[:2]), "/".join(folders[2:])
 
     allow_patterns = [
         "config.json",
@@ -155,13 +95,12 @@ def download_model(
         "tokenizer.json",
         "vocabulary.*",
     ]
-    if subfolder:
-        allow_patterns = [f"{subfolder}/{p}" for p in allow_patterns]
 
     kwargs = {
         "local_files_only": local_files_only,
         "allow_patterns": allow_patterns,
         "tqdm_class": disabled_tqdm,
+        "revision": revision,
     }
 
     if output_dir is not None:
@@ -171,32 +110,11 @@ def download_model(
     if cache_dir is not None:
         kwargs["cache_dir"] = cache_dir
 
-    try:
-        model_path = huggingface_hub.snapshot_download(repo_id, **kwargs)
-    except (
-        huggingface_hub.utils.HfHubHTTPError,
-        requests.exceptions.ConnectionError,
-    ) as exception:
-        logger = get_logger()
-        logger.warning(
-            "An error occured while synchronizing the model %s from the Hugging Face Hub:\n%s",
-            repo_id,
-            exception,
-        )
-        logger.warning(
-            "Trying to load the model directly from the local cache, if it exists."
-        )
+    if use_auth_token is not None:
+        kwargs["token"] = use_auth_token
 
-        kwargs["local_files_only"] = True
-        model_path = huggingface_hub.snapshot_download(repo_id, **kwargs)
+    return huggingface_hub.snapshot_download(repo_id, **kwargs)
 
-    if subfolder:
-        model_path = os.path.join(model_path, subfolder)
-
-    if model_path_post_hook:
-        model_path_post_hook(model_path)
-
-    return model_path
 
 def format_timestamp(
     seconds: float,
