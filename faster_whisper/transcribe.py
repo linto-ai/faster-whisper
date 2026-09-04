@@ -697,6 +697,9 @@ class WhisperModel:
             **model_kwargs,
         )
 
+        is_v3 = "large-v3" in model_size_or_path or "turbo" in model_size_or_path
+        self.is_v3 = is_v3
+
         tokenizer_file = os.path.join(model_path, "tokenizer.json")
         if tokenizer_bytes:
             self.hf_tokenizer = tokenizers.Tokenizer.from_buffer(tokenizer_bytes)
@@ -706,8 +709,16 @@ class WhisperModel:
             self.hf_tokenizer = tokenizers.Tokenizer.from_pretrained(
                 "openai/whisper-tiny" + ("" if self.model.is_multilingual else ".en")
             )
+            if is_v3:
+                # Language token <|yue|> was added
+                self.hf_tokenizer = update_v2_to_v3(self.hf_tokenizer)
+
         self.feat_kwargs = self._get_feature_kwargs(model_path, preprocessor_bytes)
         self.feature_extractor = FeatureExtractor(**self.feat_kwargs)
+        # if is_v3:
+        #     # Number of mel features changed
+        #     self.feature_extractor.mel_filters = self.feature_extractor.get_mel_filters(
+        #         self.feature_extractor.sampling_rate, self.feature_extractor.n_fft, n_mels=128)
         self.input_stride = 2
         self.num_samples_per_token = (
             self.feature_extractor.hop_length * self.input_stride
@@ -724,7 +735,11 @@ class WhisperModel:
     @property
     def supported_languages(self) -> List[str]:
         """The languages supported by the model."""
-        return list(_LANGUAGE_CODES) if self.model.is_multilingual else ["en"]
+        if not self.model.is_multilingual:
+            return ["en"]
+        if self.is_v3:
+            return list(_LANGUAGE_CODES)
+        return list(_LANGUAGE_CODES)[:-1]
 
     def _get_feature_kwargs(self, model_path, preprocessor_bytes=None) -> dict:
         config = {}
@@ -1939,3 +1954,32 @@ def merge_punctuations(alignment: List[dict], prepended: str, appended: str) -> 
         else:
             i = j
         j += 1
+
+
+def update_v2_to_v3(tokenizer):
+    """
+    Create a fast tokenizer for large-v3 based given one that works for large-v2.
+    """
+    json_str = tokenizer.to_str()
+    tokenizer_dict = json.loads(json_str)
+    has_added = False
+    new_added_tokens = []
+    language_token_example = None
+    for token in tokenizer_dict["added_tokens"]:
+        if token["content"] == "<|en|>":
+            language_token_example = token
+        if token["content"] == "<|nocaptions|>":
+            token["content"] = "<|nospeech|>"
+        if not has_added and token["content"] in ["<|translate|>"]:
+            assert language_token_example is not None
+            token_yue = language_token_example.copy()
+            token_yue["content"] = "<|yue|>"
+            token_yue["id"] = token["id"]
+            new_added_tokens.append(token_yue)
+            has_added = True
+        if has_added:
+            token["id"] += 1
+        new_added_tokens.append(token)
+    assert has_added, "Failed to add <yue> token"
+    tokenizer_dict["added_tokens"] = new_added_tokens
+    return tokenizer.from_str(json.dumps(tokenizer_dict))
