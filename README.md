@@ -6,6 +6,8 @@
 
 This implementation is up to 4 times faster than [openai/whisper](https://github.com/openai/whisper) for the same accuracy while using less memory. The efficiency can be further improved with 8-bit quantization on both CPU and GPU.
 
+> **This is the [LinTO](https://github.com/linto-ai) fork of faster-whisper**, maintained by the LinTO team on top of upstream [SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper) v1.2.1. It adds French finetuned/distilled models, extra Hugging Face model aliases, and a few loading fixes that are not (yet) in mainstream. See [**LinTO fork additions**](#linto-fork-additions) for the full list.
+
 ## Benchmark
 
 ### Whisper
@@ -56,7 +58,7 @@ For reference, here's the time and memory usage that are required to transcribe 
 
 ## Requirements
 
-* Python 3.8 or greater
+* Python 3.9 or greater
 
 Unlike openai-whisper, FFmpeg does **not** need to be installed on the system. The audio is decoded with the Python library [PyAV](https://github.com/PyAV-Org/PyAV) which bundles the FFmpeg libraries in its package.
 
@@ -232,12 +234,52 @@ logging.getLogger("faster_whisper").setLevel(logging.DEBUG)
 
 See more model and transcription options in the [`WhisperModel`](https://github.com/SYSTRAN/faster-whisper/blob/master/faster_whisper/transcribe.py) class implementation.
 
+## LinTO fork additions
+
+This fork is kept in sync with upstream [SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper) (currently rebased on **v1.2.1**) and adds the following features on top of it. Everything documented above still works unchanged; the items below are extra.
+
+### French finetuned & distilled models
+
+The model registry ships additional French Whisper checkpoints from [bofenghuang](https://huggingface.co/bofenghuang), usable directly by name:
+
+```python
+from faster_whisper import WhisperModel
+
+# Finetuned models
+model = WhisperModel("whisper-large-v3-french")   # also: whisper-large-v2-french, whisper-medium-french
+
+# Distilled models (dec2 / dec4 / dec8 / dec16 — fewer decoder layers = faster)
+model = WhisperModel("whisper-large-v3-french-distil-dec8")
+```
+
+The fully-qualified `bofenghuang/<name>` form is accepted as well. These checkpoints live in a `ctranslate2` **subfolder** of their Hugging Face repository, which the fork's `download_model` resolves automatically.
+
+Loading a French distilled model also triggers an **alignment-heads repair** step (see [SYSTRAN#688](https://github.com/SYSTRAN/faster-whisper/issues/688)): if the model's `config.json` declares out-of-range `alignment_heads`, they are rewritten to valid values so that `word_timestamps=True` works correctly.
+
+### Hugging Face model-name aliases
+
+You can refer to models by their original OpenAI / Distil-Whisper repository names; they resolve transparently to the equivalent CTranslate2 model:
+
+```python
+model = WhisperModel("openai/whisper-large-v3")        # → Systran/faster-whisper-large-v3
+model = WhisperModel("distil-whisper/distil-small.en") # → Systran/faster-distil-whisper-small.en
+```
+
+### large-v3 / turbo tokenizer fallback
+
+When a `large-v3` or `turbo` model is loaded without a bundled `tokenizer.json`, the fork patches a v2 tokenizer up to the v3 vocabulary on the fly (adds the `<|yue|>` language token and renames `<|nocaptions|>` → `<|nospeech|>`). This is a compatibility fallback for models that do not ship a v3 tokenizer; official Systran v3/turbo models already include one.
+
+### Packaging
+
+* `tokenizers` is pinned to `>=0.13,<0.21` to avoid a release that proved problematic in LinTO deployments.
+* The package version carries a `+linto` local identifier (e.g. `1.2.1+linto`) to distinguish fork builds from upstream releases.
+
 ## Community integrations
 
 Here is a non exhaustive list of open-source projects using faster-whisper. Feel free to add your project to the list!
 
 
-* [faster-whisper-server](https://github.com/fedirz/faster-whisper-server) is an OpenAI compatible server using `faster-whisper`. It's easily deployable with Docker, works with OpenAI SDKs/CLI, supports streaming, and live transcription.
+* [speaches](https://github.com/speaches-ai/speaches) is an OpenAI compatible server using `faster-whisper`. It's easily deployable with Docker, works with OpenAI SDKs/CLI, supports streaming, and live transcription.
 * [WhisperX](https://github.com/m-bain/whisperX) is an award-winning Python library that offers speaker diarization and accurate word-level timestamps using wav2vec2 alignment
 * [whisper-ctranslate2](https://github.com/Softcatala/whisper-ctranslate2) is a command line client based on faster-whisper and compatible with the original client from openai/whisper.
 * [whisper-diarize](https://github.com/MahmoudAshraf97/whisper-diarization) is a speaker diarization tool that is based on faster-whisper and NVIDIA NeMo.
@@ -249,6 +291,8 @@ Here is a non exhaustive list of open-source projects using faster-whisper. Feel
 * [Whisper-Streaming](https://github.com/ufal/whisper_streaming) implements real-time mode for offline Whisper-like speech-to-text models with faster-whisper as the most recommended back-end. It implements a streaming policy with self-adaptive latency based on the actual source complexity, and demonstrates the state of the art.
 * [WhisperLive](https://github.com/collabora/WhisperLive) is a nearly-live implementation of OpenAI's Whisper which uses faster-whisper as the backend to transcribe audio in real-time.
 * [Faster-Whisper-Transcriber](https://github.com/BBC-Esq/ctranslate2-faster-whisper-transcriber) is a simple but reliable voice transcriber that provides a user-friendly interface.
+* [Open-dubbing](https://github.com/softcatala/open-dubbing) is open dubbing is an AI dubbing system which uses machine learning models to automatically translate and synchronize audio dialogue into different languages.
+* [Whisper-FastAPI](https://github.com/heimoshuiyu/whisper-fastapi) whisper-fastapi is a very simple script that provides an API backend compatible with OpenAI, HomeAssistant, and Konele (Android voice typing) formats.
 
 ## Model conversion
 
