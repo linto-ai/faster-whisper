@@ -271,7 +271,7 @@ When a `large-v3` or `turbo` model is loaded without a bundled `tokenizer.json`,
 
 ### Packaging
 
-* `tokenizers` is pinned to `>=0.13,<0.21` to avoid a release that proved problematic in LinTO deployments.
+* `tokenizers` follows upstream's `>=0.13,<1`. (An earlier fork build pinned it to `<0.21`; that upper bound was relaxed after verifying newer releases work, so the fork can co-install with tools that require a newer `tokenizers`, e.g. NeMo.)
 * The package version carries a `+linto` local identifier (e.g. `1.2.1+linto`) to distinguish fork builds from upstream releases.
 
 ## Community integrations
