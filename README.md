@@ -6,6 +6,8 @@
 
 This implementation is up to 4 times faster than [openai/whisper](https://github.com/openai/whisper) for the same accuracy while using less memory. The efficiency can be further improved with 8-bit quantization on both CPU and GPU.
 
+> **This is the [LinTO](https://github.com/linto-ai) fork of faster-whisper**, maintained by the LinTO team on top of upstream [SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper) v1.2.1. It adds French finetuned/distilled models, extra Hugging Face model aliases, and a few loading fixes that are not (yet) in mainstream. See [**LinTO fork additions**](#linto-fork-additions) for the full list.
+
 ## Benchmark
 
 ### Whisper
@@ -231,6 +233,46 @@ logging.getLogger("faster_whisper").setLevel(logging.DEBUG)
 ### Going further
 
 See more model and transcription options in the [`WhisperModel`](https://github.com/SYSTRAN/faster-whisper/blob/master/faster_whisper/transcribe.py) class implementation.
+
+## LinTO fork additions
+
+This fork is kept in sync with upstream [SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper) (currently rebased on **v1.2.1**) and adds the following features on top of it. Everything documented above still works unchanged; the items below are extra.
+
+### French finetuned & distilled models
+
+The model registry ships additional French Whisper checkpoints from [bofenghuang](https://huggingface.co/bofenghuang), usable directly by name:
+
+```python
+from faster_whisper import WhisperModel
+
+# Finetuned models
+model = WhisperModel("whisper-large-v3-french")   # also: whisper-large-v2-french, whisper-medium-french
+
+# Distilled models (dec2 / dec4 / dec8 / dec16 — fewer decoder layers = faster)
+model = WhisperModel("whisper-large-v3-french-distil-dec8")
+```
+
+The fully-qualified `bofenghuang/<name>` form is accepted as well. These checkpoints live in a `ctranslate2` **subfolder** of their Hugging Face repository, which the fork's `download_model` resolves automatically.
+
+Loading a French distilled model also triggers an **alignment-heads repair** step (see [SYSTRAN#688](https://github.com/SYSTRAN/faster-whisper/issues/688)): if the model's `config.json` declares out-of-range `alignment_heads`, they are rewritten to valid values so that `word_timestamps=True` works correctly.
+
+### Hugging Face model-name aliases
+
+You can refer to models by their original OpenAI / Distil-Whisper repository names; they resolve transparently to the equivalent CTranslate2 model:
+
+```python
+model = WhisperModel("openai/whisper-large-v3")        # → Systran/faster-whisper-large-v3
+model = WhisperModel("distil-whisper/distil-small.en") # → Systran/faster-distil-whisper-small.en
+```
+
+### large-v3 / turbo tokenizer fallback
+
+When a `large-v3` or `turbo` model is loaded without a bundled `tokenizer.json`, the fork patches a v2 tokenizer up to the v3 vocabulary on the fly (adds the `<|yue|>` language token and renames `<|nocaptions|>` → `<|nospeech|>`). This is a compatibility fallback for models that do not ship a v3 tokenizer; official Systran v3/turbo models already include one.
+
+### Packaging
+
+* `tokenizers` is pinned to `>=0.13,<0.21` to avoid a release that proved problematic in LinTO deployments.
+* The package version carries a `+linto` local identifier (e.g. `1.2.1+linto`) to distinguish fork builds from upstream releases.
 
 ## Community integrations
 
